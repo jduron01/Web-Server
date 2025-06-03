@@ -81,7 +81,7 @@ int main() {
 char *createResponse(char *buffer) {
     char *request = buffer;
     char *rest = strstr(request, "\r\n");
-    char method[16] = {0}, path[128] = {0}, version[16] = {0};
+    char method[16] = {0}, path[256] = {0}, version[16] = {0};
 
     if (!rest) {
         fprintf(stderr, "Invalid request format.\n");
@@ -110,7 +110,7 @@ char *createResponse(char *buffer) {
         }
     }
 
-    // Handle the body if present
+    //Handle the body if present
     char *body = strstr(buffer, "\r\n\r\n");
     if (body) {
         body += 4; // Move past the \r\n\r\n
@@ -119,26 +119,22 @@ char *createResponse(char *buffer) {
         printf("No body in request.\n\n");
     }
 
-    char *response = (char *)calloc(BUFFER_SIZE, sizeof(char));
-    if (!response) {
-        perror("calloc");
-        return NULL;
-    }
-
-    char file_name[256] = {0};
+    char file_name[strlen(path) + strlen("public") + 1];
     snprintf(file_name, sizeof(file_name), "public%s", path);
 
+    char *response = NULL;
     if (strncmp(method, "GET", strlen("GET")) == 0) {
-        handleGetRequest(file_name, version, &response);
-    } else if (strncmp(method, "POST", strlen("POST"))) {
-        char *file_data;
-        handlePostRequest(file_name, file_data, version, &response);
+        response = handleGetRequest(file_name, version);
     }
+    // else if (strncmp(method, "POST", strlen("POST"))) {
+    //     char *file_data;
+    //     handlePostRequest(file_name, file_data, version, &response);
+    // }
 
     return response;
 }
 
-void handleGetRequest(char *file_name, char *version, char **response) {
+char *handleGetRequest(char *file_name, char *version) {
     printf("Looking for file: %s\n\n", file_name);
 
     char status[128] = {0};
@@ -146,18 +142,24 @@ void handleGetRequest(char *file_name, char *version, char **response) {
     FILE *file = fopen(file_name, "r");
     if (!file) {
         fprintf(stderr, "Not able to open file.\n");
+
         snprintf(status, sizeof(status), "%s 404 Not Found\r\n", version);
         getCurrentDate(date);
-        snprintf(*response, BUFFER_SIZE, "%s%s\r\n", status, date);
+
+        int len = strlen(status) + strlen(date) + strlen("\r\n");
+        char *response = (char *)calloc(len + 1, sizeof(char));
+        snprintf(response, len + 1, "%s%s\r\n", status, date);
+
+        return response;
     }
 
     snprintf(status, sizeof(status), "%s 200 OK\r\n", version);
     getCurrentDate(date);
     
     char content_length[128] = {0};
-    fseek(file, 0, SEEK_END);
-    snprintf(content_length, sizeof(content_length), "Content-Length: %ld\r\n", ftell(file));
-    fseek(file, 0, SEEK_SET);
+    struct stat st;
+    fstat(fileno(file), &st);
+    snprintf(content_length, sizeof(content_length), "Content-Length: %ld\r\n", st.st_size);
 
     char file_type[128] = {0};
     magic_t magic = magic_open(MAGIC_MIME_TYPE);
@@ -169,50 +171,49 @@ void handleGetRequest(char *file_name, char *version, char **response) {
     }
     magic_close(magic);
 
-    snprintf(*response, BUFFER_SIZE, "%s%s%s%s", status, date, content_length, file_type);
-    printf("%s", *response);
+    char *buffer = (char *)calloc(st.st_size + 1, sizeof(char));
+    if (fread(buffer, 1, st.st_size, file) < (size_t)st.st_size) {
+        perror("fread");
 
-    char text[256] = {0};
-    int curr_size = BUFFER_SIZE;
-    while (fgets(text, sizeof(text), file)) {
-        int response_len = strlen(*response);
-        int text_len = strlen(text);
-
-        if (response_len + text_len + 1 > curr_size) {
-            while (response_len + text_len + 1 > curr_size) {
-                curr_size *= 2;
-            }
-
-            *response = (char *)realloc(*response, curr_size);
-            if (!(*response)) {
-                perror("realloc");
-                free(*response);
-                exit(1);
-            }
-        }
-
-        strncat(*response, text, strlen(*response));
-    }
-
-    fclose(file);
-}
-
-void handlePostRequest(char *file_name, char *file_data, char *version, char **response) {
-    printf("Uploading file: %s\n\n", file_name);
-
-    char status[128] = {0};
-    char date[128] = {0};
-    FILE *file = fopen(file_name, "w");
-    if (!file) {
-        fprintf(stderr, "Not able to open file.\n");
         snprintf(status, sizeof(status), "%s 500 Internal Server Error\r\n", version);
         getCurrentDate(date);
-        snprintf(*response, BUFFER_SIZE, "%s%s\r\n", status, date);
+
+        int len = strlen(status) + strlen(date) + strlen("\r\n");
+        char *response = (char *)calloc(len + 1, sizeof(char));
+        snprintf(response, len + 1, "%s%s\r\n", status, date);
+
+        fclose(file);
+        free(buffer);
+
+        return response;
     }
 
-    snprintf(status, sizeof(status), "%s 200 OK\r\n", version);
-    getCurrentDate(date);
+    int len = strlen(status) + strlen(date) + strlen(content_length) + strlen(file_type) + st.st_size;
+    char *response = (char *)calloc(len + 1, sizeof(char));
+    snprintf(response, len + 1, "%s%s%s%s%s", status, date, content_length, file_type, buffer);
+
+    fclose(file);
+    free(buffer);
+
+    return response;
 }
+
+// void handlePostRequest(char *file_name, char *file_data, char *version, char **response) {
+//     printf("Uploading file: %s\n\n", file_name);
+
+//     char status[128] = {0};
+//     char date[128] = {0};
+//     FILE *file = fopen(file_name, "w");
+//     if (!file) {
+//         fprintf(stderr, "Not able to open file.\n");
+//         snprintf(status, sizeof(status), "%s 500 Internal Server Error\r\n", version);
+//         getCurrentDate(date);
+//         snprintf(*response, BUFFER_SIZE, "%s%s\r\n", status, date);
+//     }
+
+//     snprintf(status, sizeof(status), "%s 200 OK\r\n", version);
+//     getCurrentDate(date);
+// }
 
 void getCurrentDate(char *date) {
     time_t current_date = time(NULL);

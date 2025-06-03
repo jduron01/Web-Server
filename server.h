@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
@@ -14,6 +15,6 @@
 #define BUFFER_SIZE 1024
 
 char *createResponse(char *);
-void handleGetRequest(char *, char *, char **);
+char *handleGetRequest(char *, char *);
 void handlePostRequest(char *, char *, char *, char **);
 void getCurrentDate(char *);
