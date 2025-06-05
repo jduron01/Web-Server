@@ -143,10 +143,6 @@ char *createResponse(char *buffer) {
     if (strncmp(method, "GET", strlen("GET")) == 0) {
         return handleGetRequest(file_name, version);
     }
-    // else if (strncmp(method, "POST", strlen("POST"))) {
-    //     char *file_data;
-    //     handlePostRequest(file_name, file_data, version, &response);
-    // }
 
     return createErrorResponse(version, HTTP_500);
 }
@@ -223,23 +219,6 @@ char *handleGetRequest(char *file_name, char *version) {
     
     return response;
 }
-
-// void handlePostRequest(char *file_name, char *file_data, char *version, char **response) {
-//     printf("Uploading file: %s\n\n", file_name);
-
-//     char status[128] = {0};
-//     char date[128] = {0};
-//     FILE *file = fopen(file_name, "w");
-//     if (!file) {
-//         fprintf(stderr, "Not able to open file.\n");
-//         snprintf(status, sizeof(status), "%s 500 Internal Server Error\r\n", version);
-//         getCurrentDate(date);
-//         snprintf(*response, BUFFER_SIZE, "%s%s\r\n", status, date);
-//     }
-
-//     snprintf(status, sizeof(status), "%s 200 OK\r\n", version);
-//     getCurrentDate(date);
-// }
 
 char *createErrorResponse(char *version, char *status) {
     char date[128] = {0};

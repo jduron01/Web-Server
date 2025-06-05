@@ -10,7 +10,7 @@
 #include <time.h>
 #include <magic.h>
 
-#define PORT 80
+#define PORT 8080
 #define BACKLOG 5
 #define BUFFER_SIZE 1024
 
