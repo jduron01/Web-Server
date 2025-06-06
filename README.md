@@ -1,2 +1,2 @@
 # Web-Server
-Implementation of a web server. Only supports HTTP, and the only HTTP method that is supported is GET requests. Will add support for POST requests and other features in the future.
+Implementation of a web server. Only supports HTTP and the HTTP methods currenty supported are GET and POST requests. Will add support for other features in the future.
