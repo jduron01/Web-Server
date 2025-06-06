@@ -101,32 +101,6 @@ char *createResponse(char *buffer) {
         return createErrorResponse(version, HTTP_404);
     }
 
-    char *header = rest + 2; // Move past the \r\n
-    while (header && *header != '\0' && *header != '\r') {
-        char *next_line = strstr(header, "\r\n");
-
-        if (next_line) {
-            *next_line = '\0'; // Null-terminate the header line
-        }
-
-        printf("%s\n", header);
-
-        if (next_line) {
-            header = next_line + 2; // Move past the \r\n
-        } else {
-            break; // No more headers
-        }
-    }
-
-    //Handle the body if present
-    char *body = strstr(buffer, "\r\n\r\n");
-    if (body) {
-        body += 4; // Move past the \r\n\r\n
-        printf("Body: %s\n\n", body);
-    } else {
-        printf("No body in request.\n\n");
-    }
-
     char *dir = "public";
     int dir_len = strlen(dir);
     int path_len = strlen(path);
@@ -137,16 +111,19 @@ char *createResponse(char *buffer) {
 
     char file_name[512] = {0};
     int offset = 0;
-    safeCopy(file_name, sizeof(file_name), dir, dir_len, &offset);
-    safeCopy(file_name, sizeof(file_name), path, path_len, &offset);
+    if (
+        safeCopy(file_name, sizeof(file_name), dir, dir_len, &offset) == -1 ||
+        safeCopy(file_name, sizeof(file_name), path, path_len, &offset) == -1
+    ) return createErrorResponse(version, HTTP_500);
 
     if (strncmp(method, "GET", strlen("GET")) == 0) {
         return handleGetRequest(file_name, version);
+    } else if (strncmp(method, "POST", strlen("POST")) == 0) {
+        char *header = rest + 2;
+        char *body = strstr(buffer, "\r\n\r\n");
+
+        return handlePostRequest(file_name, version, header, body);
     }
-    // else if (strncmp(method, "POST", strlen("POST"))) {
-    //     char *file_data;
-    //     handlePostRequest(file_name, file_data, version, &response);
-    // }
 
     return createErrorResponse(version, HTTP_500);
 }
@@ -180,7 +157,30 @@ char *handleGetRequest(char *file_name, char *version) {
     }
 
     char content_type[128] = {0};
-    getContentType(file_name, content_type, sizeof(content_type));
+    int content_type_size = sizeof(content_type);
+    if (strstr(file_name, ".css")) {
+        int offset = 0;
+        if (
+            safeCopy(content_type, content_type_size, "Content-Type: text/css\r\n\r\n",
+                strlen("Content-Type: text/css\r\n\r\n"), &offset) == -1
+        ) return createErrorResponse(version, HTTP_500);
+    } else {
+        magic_t magic = magic_open(MAGIC_MIME_TYPE);
+        magic_load(magic, NULL);
+
+        char *mime_type = (char *)magic_file(magic, file_name);
+        int offset = 0;
+        if (
+            safeCopy(content_type, content_type_size, "Content-Type: ", strlen("Content-Type: "), &offset) == -1 ||
+            safeCopy(content_type, content_type_size, mime_type, strlen(mime_type), &offset) == -1 ||
+            safeCopy(content_type, content_type_size, "\r\n\r\n", strlen("\r\n\r\n"), &offset) == -1
+        ) {
+            magic_close(magic);
+            return createErrorResponse(version, HTTP_500);
+        }
+
+        magic_close(magic);
+    }
 
     int version_len = strlen(version);
     int date_len = strlen(date);
@@ -201,18 +201,20 @@ char *handleGetRequest(char *file_name, char *version) {
     }
 
     int offset = 0;
-    safeCopy(response, response_len, version, version_len, &offset);
-    safeCopy(response, response_len, " ", strlen(" "), &offset);
-    safeCopy(response, response_len, HTTP_200, strlen(HTTP_200), &offset);
-    safeCopy(response, response_len, date, date_len, &offset);
-    safeCopy(response, response_len, "Content-Length: ", strlen("Content-Length: "), &offset);
-    safeCopy(response, response_len, file_size, file_size_len, &offset);
-    safeCopy(response, response_len, "\r\n", ws_len, &offset);
-    safeCopy(response, response_len, content_type, content_type_len, &offset);
+    if (
+        safeCopy(response, response_len, version, version_len, &offset) == -1 ||
+        safeCopy(response, response_len, " ", strlen(" "), &offset) == -1 ||
+        safeCopy(response, response_len, HTTP_200, strlen(HTTP_200), &offset) == -1 ||
+        safeCopy(response, response_len, date, date_len, &offset) == -1 ||
+        safeCopy(response, response_len, "Content-Length: ", strlen("Content-Length: "), &offset) == -1 ||
+        safeCopy(response, response_len, file_size, file_size_len, &offset) == -1 ||
+        safeCopy(response, response_len, "\r\n", ws_len, &offset) == -1 ||
+        safeCopy(response, response_len, content_type, content_type_len, &offset) == -1
+    ) return createErrorResponse(version, HTTP_500);
 
     printf("%s\n", response);
 
-    if (fread(response + offset, 1, st.st_size, file) != (size_t)st.st_size) {
+    if (fread(response + offset, sizeof(char), st.st_size, file) != (size_t)st.st_size) {
         fclose(file);
         free(response);
 
@@ -224,23 +226,115 @@ char *handleGetRequest(char *file_name, char *version) {
     return response;
 }
 
-// void handlePostRequest(char *file_name, char *file_data, char *version, char **response) {
-//     printf("Uploading file: %s\n\n", file_name);
+char *handlePostRequest(char *file_name, char *version, char *header, char *body) {
+    printf("Writing to file: %s\n\n", file_name);
 
-//     char status[128] = {0};
-//     char date[128] = {0};
-//     FILE *file = fopen(file_name, "w");
-//     if (!file) {
-//         fprintf(stderr, "Not able to open file.\n");
-//         snprintf(status, sizeof(status), "%s 500 Internal Server Error\r\n", version);
-//         getCurrentDate(date);
-//         snprintf(*response, BUFFER_SIZE, "%s%s\r\n", status, date);
-//     }
+    FILE *file = fopen(file_name, "wb");
+    if (!file) {
+        fprintf(stderr, "Not able to open file.\n");
 
-//     snprintf(status, sizeof(status), "%s 200 OK\r\n", version);
-//     getCurrentDate(date);
-// }
+        return createErrorResponse(version, HTTP_404);
+    }
+    fwrite(" ", sizeof(char), strlen(" "), file);
 
+    char date[128] = {0};
+    getCurrentDate(date, sizeof(date));
+
+    char content_type[128] = {0};
+    char content_length[128] = {0};
+    while (header && *header != '\0' && *header != '\r') {
+        char *next_line = strstr(header, "\r\n");
+
+        if (next_line) {
+            *next_line = '\0';
+        }
+
+        if (strstr(header, "Content-Type")) {
+            int offset = 0;
+            if (safeCopy(content_type, sizeof(content_type), header, strlen(header), &offset) == -1) {
+                return createErrorResponse(version, HTTP_500);
+            }
+        }
+        
+        if (strstr(header, "Content-Length")) {
+            int offset = 0;
+            if (safeCopy(content_length, sizeof(content_length), header, strlen(header), &offset) == -1) {
+                return createErrorResponse(version, HTTP_500);
+            }
+        }
+
+        if (next_line) {
+            header = next_line + 2;
+        } else {
+            break;
+        }
+    }
+
+    if (body) {
+        body += 4;
+    } else {
+        printf("No body in request.\n\n");
+        fclose(file);
+
+        return createErrorResponse(version, HTTP_204);
+    }
+
+    int body_len = atoi(content_length + strlen("Content-Length: "));
+    if (fwrite(body, sizeof(char), body_len, file) != (size_t)body_len) {
+        fclose(file);
+        
+        return createErrorResponse(version, HTTP_500);
+    }
+
+    int version_len = strlen(version);
+    int date_len = strlen(date);
+    int path_len = strlen(file_name);
+    int content_type_len = strlen(content_type);
+    int ws_len = strlen("\r\n");
+    int headers_len = version_len + strlen(" ") + strlen(HTTP_200) +
+                      date_len + path_len + ws_len + 
+                      strlen("Content-Type: ") + content_type_len + ws_len * 2;
+    int response_len = headers_len + body_len;
+
+    char *response = (char *)calloc(response_len, sizeof(char));
+    if (!response) {
+        perror("calloc");
+        fclose(file);
+
+        return createErrorResponse(version, HTTP_500);
+    }
+
+    int offset = 0;
+    if (
+        safeCopy(response, response_len, version, version_len, &offset) == -1 ||
+        safeCopy(response, response_len, " ", strlen(" "), &offset) == -1 ||
+        safeCopy(response, response_len, HTTP_200, strlen(HTTP_200), &offset) == -1 ||
+        safeCopy(response, response_len, date, date_len, &offset) == -1 ||
+        safeCopy(response, response_len, "Location: ", strlen("Location: "), &offset) == -1 ||
+        safeCopy(response, response_len, file_name, path_len, &offset) == -1 ||
+        safeCopy(response, response_len, "\r\n", ws_len, &offset) == -1 ||
+        safeCopy(response, response_len, content_type, content_type_len, &offset) == -1 ||
+        safeCopy(response, response_len, "\r\n\r\n", strlen("\r\n\r\n"), &offset) == -1
+    ) {
+        free(response);
+
+        return createErrorResponse(version, HTTP_500);
+    }
+
+    if (safeCopy(response, response_len, body, body_len, &offset) == -1) {
+        free(response);
+
+        return createErrorResponse(version, HTTP_500);
+    }
+
+    fclose(file);
+
+    printf("%s\n", response);
+    
+    return response;
+}
+
+// TODO: fix this function
 char *createErrorResponse(char *version, char *status) {
     char date[128] = {0};
     getCurrentDate(date, sizeof(date));
@@ -257,22 +351,30 @@ char *createErrorResponse(char *version, char *status) {
     }
 
     int offset = 0;
-    safeCopy(response, response_len, version, version_len, &offset);
-    safeCopy(response, response_len, " ", strlen(" "), &offset);
-    safeCopy(response, response_len, status, status_len, &offset);
-    safeCopy(response, response_len, date, date_len, &offset);
-    safeCopy(response, response_len, "\r\n", strlen("\r\n"), &offset);
+    if (
+        safeCopy(response, response_len, version, version_len, &offset) == -1 ||
+        safeCopy(response, response_len, " ", strlen(" "), &offset) == -1 ||
+        safeCopy(response, response_len, status, status_len, &offset) == -1 ||
+        safeCopy(response, response_len, date, date_len, &offset) == -1
+    ) {
+        free(response);
+        fprintf(stderr, "Failed to build error response.\n");
+
+        return NULL;
+    }
 
     return response;
 }
 
-void safeCopy(char *dest, int dest_len, char *src, int src_len, int *offset) {
+int safeCopy(char *dest, int dest_len, char *src, int src_len, int *offset) {
     if (*offset + src_len >= dest_len) {
-        dest = NULL;
+        return -1;
     }
 
     memcpy(dest + *offset, src, src_len);
     *offset += src_len;
+
+    return 0;
 }
 
 void getCurrentDate(char *date, int date_size) {
@@ -287,25 +389,6 @@ void getCurrentDate(char *date, int date_size) {
 
     snprintf(date, date_size, "Date: %04d-%02d-%02d %02d:%02d:%02d UTC\r\n",
         year, month, day, hour, min, sec);
-}
-
-void getContentType(char *file_name, char *content_type, int content_type_size) {
-    if (strstr(file_name, ".css")) {
-        int offset = 0;
-        safeCopy(content_type, content_type_size, "Content-Type: text/css\r\n\r\n",
-            strlen("Content-Type: text/css\r\n\r\n"), &offset);
-    } else {
-        magic_t magic = magic_open(MAGIC_MIME_TYPE);
-        magic_load(magic, NULL);
-
-        char *mime_type = (char *)magic_file(magic, file_name);
-        int offset = 0;
-        safeCopy(content_type, content_type_size, "Content-Type: ", strlen("Content-Type: "), &offset);
-        safeCopy(content_type, content_type_size, mime_type, strlen(mime_type), &offset);
-        safeCopy(content_type, content_type_size, "\r\n\r\n", strlen("\r\n\r\n"), &offset);
-
-        magic_close(magic);
-    }
 }
 
 int intToString(unsigned int n, char *string, int string_size) {
