@@ -1,3 +1,6 @@
+#ifndef SERVER_H
+#define SERVER_H
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,3 +32,5 @@ char *createErrorResponse(char *, char *);
 int safeCopy(char *, int, char *, int, int *);
 void getCurrentDate(char *, int);
 int intToString(unsigned int, char *, int);
+
+#endif
