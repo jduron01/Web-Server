@@ -1,0 +1,29 @@
+"""MODULE.bazel: Declares Bazel dependencies for this project."""
+module(
+    name = "server",
+    version = "0.0.0"
+)
+
+bazel_dep(name = "rules_cc", version = "0.1.1")
+bazel_dep(name = "rules_rust", version = "0.61.0")
+
+RUST_EDITION = "2024"
+RUST_VERSION = "1.87.0"
+
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(
+    edition = RUST_EDITION,
+    versions = [RUST_VERSION],
+)
+
+use_repo(rust, "rust_toolchains")
+register_toolchains("@rust_toolchains//:all")
+
+crate = use_extension("@rules_rust//crate_universe:extension.bzl", "crate")
+crate.from_cargo(
+    name = "crates",
+    cargo_lockfile = "//rust-server:Cargo.lock",
+    manifests = ["//rust-server:Cargo.toml"],
+)
+
+use_repo(crate, "crates")
