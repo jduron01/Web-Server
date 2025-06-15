@@ -1,5 +1,4 @@
 #include "server.h"
-#include <locale.h>
 
 int main() {
     struct sockaddr_in server_addr;
@@ -118,7 +117,7 @@ char *handleGetRequest(char *file_name, char *version) {
     }
 
     size_t file_size = st.st_size;
-    char *file_content = (char *)malloc(file_size);
+    char *file_content = (char *)calloc(file_size, sizeof(char));
     if (!file_content) {
         close(fd);
         return createErrorResponse(version, HTTP_500);
@@ -135,16 +134,18 @@ char *handleGetRequest(char *file_name, char *version) {
     getCurrentDate(date, sizeof(date));
 
     char size_string[32];
-    if (sizeToString(file_size, size_string, sizeof(file_size)) == -1) {
+    if (sizeToString(file_size, size_string, sizeof(size_string)) == -1) {
         return createErrorResponse(version, HTTP_500);
     }
 
     char content_type[128] = "Content-Type: ";
     getMimeType(file_name, content_type);
 
-    char *response = (char *)malloc(strlen(version) + strlen(HTTP_200) + strlen(date) + 
-                     strlen("Content-Length: ") + strlen(size_string) + strlen(content_type) +
-                     file_size);
+    size_t response_len = strlen(version) + 1 + strlen(HTTP_200) + strlen(date) +
+                          strlen("Content-Length: ") + strlen(size_string) + 2 +
+                          strlen(content_type) + 4 + file_size;
+
+    char *response = (char *)calloc(response_len + 1, sizeof(char));
     if (!response) {
         free(file_content);
         return createErrorResponse(version, HTTP_500);
@@ -186,37 +187,34 @@ char *handlePostRequest(char *file_name, char *version, char *body) {
     char date[128];
     getCurrentDate(date, sizeof(date));
 
+    char size_string[32];
+    if (sizeToString(body_len, size_string, sizeof(size_string)) == -1) {
+        return createErrorResponse(version, HTTP_500);
+    }
+
     char content_type[128] = "Content-Type: ";
     getMimeType(file_name, content_type);
-
-    char content_length[64];
-    snprintf(content_length, sizeof(content_length), "Content-Length: %zu\r\n", body_len);
 
     char location[512 + 16];
     snprintf(location, sizeof(location), "Location: %s\r\n", file_name);
 
-    size_t version_len = strlen(version);
-    size_t date_len = strlen(date);
-    size_t content_length_len = strlen(content_length);
-    size_t content_type_len = strlen(content_type);
-    size_t location_len = strlen(location);
-    size_t response_len = version_len + 1 + strlen(HTTP_200) +
-                         date_len + content_length_len +
-                         content_type_len + location_len + 2 + body_len;
+    size_t response_len = strlen(version) + 1 + strlen(HTTP_200) + strlen(date) +
+                          strlen("Content-Length: ") + strlen(size_string) + 2 +
+                          strlen(content_type) + strlen(location) + 2 +
+                          (body_len > 0 ? body_len : 0);
 
-    char *response = (char *)malloc(response_len + 1);
+    char *response = (char *)calloc(response_len + 1, sizeof(char));
     if (!response) {
         return createErrorResponse(version, HTTP_500);
     }
 
-    int n = snprintf(response, response_len + 1, "%s %s%s%s%s%s\r\n",
-                     version, HTTP_200, date, content_length, content_type, location);
+    size_t written = snprintf(response, response_len + 1,"%s %s%sContent-Length: %s\r\n%s%s\r\n",
+                              version, HTTP_200, date, size_string, content_type, location);
 
-    if (body && body_len > 0) {
-        memcpy(response + n, body, body_len);
-        response[n + body_len] = '\0';
-    } else {
-        response[n] = '\0';
+    if (body_len > 0 && written < response_len) {
+        memcpy(response + written, body, body_len);
+        written += body_len;
+        response[written] = '\0';
     }
 
     return response;
@@ -227,11 +225,10 @@ char *createErrorResponse(char *version, char *status) {
         return NULL;
     }
 
-    const char *body_template = 
-        "<html><head><title>Error</title></head>"
-        "<body><h1>%s</h1></body></html>";
+    const char *body_template = "<html><head><title>Error</title></head>"
+                                "<body><h1>%s</h1></body></html>";
     
-    char body[512];
+    char body[strlen(body_template) + strlen(status) + 1];
     int body_len = snprintf(body, sizeof(body), body_template, status);
     if (body_len < 0 || body_len >= (int)sizeof(body)) {
         return NULL;
@@ -240,36 +237,24 @@ char *createErrorResponse(char *version, char *status) {
     char date[128] = {0};
     getCurrentDate(date, sizeof(date));
 
-    size_t response_len = snprintf(NULL, 0,
-        "%s %s\r\n"
-        "%s"
-        "Content-Type: text/html\r\n"
-        "Content-Length: %d\r\n"
-        "Connection: close\r\n"
-        "\r\n"
-        "%s",
-        version, status,
-        date,
-        body_len,
-        body);
+    char size_string[32];
+    if (sizeToString(body_len, size_string, sizeof(size_string)) == -1) {
+        return createErrorResponse(version, HTTP_500);
+    }
 
-    char *response = malloc(response_len + 1);
+    size_t response_len = strlen(version) + 1 + strlen(status) + strlen(date) +
+                          strlen("Content-Type: text/html\r\n") +
+                          strlen("Content-Length: ") + strlen(size_string) +
+                          2 + strlen("Connection: close\r\n\r\n") + body_len;
+
+    char *response = (char *)calloc(response_len + 1, sizeof(char));
     if (!response) {
         return NULL;
     }
 
-    snprintf(response, response_len + 1,
-        "%s %s\r\n"
-        "%s"
-        "Content-Type: text/html\r\n"
-        "Content-Length: %d\r\n"
-        "Connection: close\r\n"
-        "\r\n"
-        "%s",
-        version, status,
-        date,
-        body_len,
-        body);
+    snprintf(response, response_len + 1, "%s %s%sContent-Type: text/html\r\n"
+             "Content-Length: %s\r\nConnection: close\r\n\r\n%s",
+             version, status, date, size_string, body);
 
     return response;
 }
